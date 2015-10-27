@@ -1,0 +1,65 @@
+(use pharen.stats as stats)
+
+(defmacro trial (expr)
+  '(let [time-start (microtime TRUE)
+         result ~expr
+         time-duration (- (microtime TRUE) time-start)]
+     time-duration))
+
+(defmacro bench (name expr)
+  '(let [n 10
+         times []]
+     (local times (dotimes [i n]
+                             (local t (trial ~expr))
+                             (set! times (cons t times))))
+     (prn (generate-report ~name n times))
+     {:name ~name :times times}))
+
+(fn pretty (t)
+  (if (> t 1000)
+    (. (sprintf "%.4f" t) " seconds")
+    (. (sprintf "%.4f" (* 1000 t)) " ms")))
+
+(fn generate-report (name n ^Seq times)
+  (let [mean (stats.mean times)
+        median (stats.median times)
+        max (stats.max times)
+        min (stats.min times)
+        std-dev (stats.std-dev times)
+        plusmin (round (* (/ (* 2 std-dev) mean) 100) 2)
+        header (. "Benchmarking " name " - " n " trials:")]
+    (. header "\n"
+       (str-repeat "=" (strlen header)) "\n"
+       "Mean:\t "   (pretty mean) " +/- " plusmin "%\n"
+       "Median:\t " (pretty median) "\n"
+       "Max:\t "    (pretty max) "\n"
+       "Min:\t "    (pretty min) "\n"
+       "Std dev: " (pretty std-dev) "\n"
+       )))
+
+(fn get-diffs (xs ys)
+  (map-indexed (lambda (x i)
+                       (- x (:ys i)))
+               xs))
+(fn get-perc (x y)
+  (round (* (/ (abs x) (abs y)) 100) 2))
+
+(fn compare-benches (b1 b2)
+  (let [name1 (:b1 :name)
+        name2 (:b2 :name)
+        times1 (:b1 :times) ^Seq
+        times2 (:b2 :times) ^Seq
+        mean1 (stats.mean times1)
+        mean2 (stats.mean times2)
+        diffs (get-diffs times1 times2) ^Seq
+        mean-diffs (stats.mean diffs)
+        header (. "Comparing " name1 " and " name2)]
+    (prn (.
+          header "\n"
+          (str-repeat "=" (strlen header)) "\n"
+          (if (neg? mean-diffs) ; b1 is faster
+            (. name1 " is on average faster by "
+               (get-perc mean-diffs mean2) "%")
+            (. name2 " is on average faster by "
+               (get-perc mean-diffs mean2) "%"))
+          "\n"))))

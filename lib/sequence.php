@@ -4,6 +4,7 @@ interface IPharenSeq{
     public function rest();
     public function cons($item);
 }
+class_alias("IPharenSeq", "Seq");
 
 interface IPharenLazy{
     public function force();
@@ -14,7 +15,23 @@ interface IPharenComparable{
     public function eq($other);
 }
 
-class PharenList implements IPharenSeq, IPharenComparable, Countable, ArrayAccess, Iterator{
+interface IPharenHashable{
+    public function hash();
+}
+
+abstract class FastSeq implements IPharenSeq{
+    public $first;
+    public $rest;
+    public $length;
+
+    abstract public function first();
+    abstract public function rest();
+    abstract public function cons($item);
+}
+
+class PharenList extends FastSeq
+    implements IPharenComparable, Countable, ArrayAccess, Iterator{
+
     public $first;
     public $rest;
     public $length = Null;
@@ -47,6 +64,12 @@ class PharenList implements IPharenSeq, IPharenComparable, Countable, ArrayAcces
             }else{
                 return self::create_from_array($xs);
             }
+        }else if($xs instanceof PharenHashMap) {
+            $arr = array();
+            foreach($xs as $key=>$val){
+                $arr []= array($key, $val);
+            }
+            return self::create_from_array($arr);
         }else if(is_string($xs)){
             $splitted = str_split($xs);
             return self::create_from_array($splitted);
@@ -110,7 +133,7 @@ class PharenList implements IPharenSeq, IPharenComparable, Countable, ArrayAcces
     }
 
     public function count(){
-        if($this->length){
+        if(isset($this->length)){
             return $this->length;
         }else{
             $this->length = 1 + $this->rest()->count();
@@ -426,17 +449,36 @@ class PharenHashMap implements Countable, ArrayAccess, Iterator, IPharenComparab
         }
     }
 
+    public function arr(){
+        return $this->hashmap;
+    }
+
+    public function hashOf($key){
+        if(is_object($key)){
+            if($key instanceof IPharenHashable){
+                return $key->hash();
+            }else{
+                return spl_object_hash($key);
+            }
+        }else{
+            return $key;
+        }
+    }
+
     public function assoc($key, $val){
         $new_hashmap = $this->hashmap;
+        $key = $this->hashOf($key);
         $new_hashmap[$key] = $val;
         return new PharenHashMap($new_hashmap, $this->count+1);
     }
 
     public function offsetGet($key){
+        $key = $this->hashOf($key);
         return $this->hashmap[$key];
     }
 
     public function offsetSet($key, $val){
+        $key = $this->hashOf($key);
         $this->hashmap[$key] = $val;
     }
 
@@ -444,6 +486,7 @@ class PharenHashMap implements Countable, ArrayAccess, Iterator, IPharenComparab
     }
 
     public function offsetExists($key){
+        $key = $this->hashOf($key);
         return isset($this->hashmap[$key]);
     }
 
@@ -468,7 +511,11 @@ class PharenHashMap implements Countable, ArrayAccess, Iterator, IPharenComparab
     }
 
     public function valid(){
-        return isset($this->hashmap[key($this->hashmap)]);
+        if($this->hashmap instanceof SplObjectStorage){
+            return $this->hashmap->valid();
+        }else{
+            return isset($this->hashmap[key($this->hashmap)]);
+        }
     }
 
     public function eq($other){

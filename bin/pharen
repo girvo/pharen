@@ -12,7 +12,10 @@ if(__FILE__ === realpath($_SERVER['SCRIPT_NAME'])){
             if(strpos($arg, "--") === 0){
                 set_flag(substr($arg, 2));
             }else if(strpos($arg, "-") === 0){
-                set_flag(substr($arg, 1));
+                $simple_args = substr($arg, 1);
+                foreach(str_split($simple_args) as $simple_arg){
+                    set_flag($simple_arg);
+                }
             }else{
                 $input_files[] = $arg;
             }
@@ -38,18 +41,17 @@ if(__FILE__ === realpath($_SERVER['SCRIPT_NAME'])){
     $num_input_files = count($input_files);
     if($num_input_files === 0 || isset(Flags::$flags['repl'])){
         $repl_vars = array();
+        include_once("repl.php");
         if($num_input_files > 0){
             define("PHARENREPLMODE", True);
             $last_file_php = str_replace(".phn", ".php", $input_files[$num_input_files-1]);
-            $existing_vars = get_defined_vars();
-            include_once($last_file_php);
-            $new_vars = get_defined_vars();
-            $repl_vars = array_diff_assoc($new_vars, $existing_vars);
+            $repl_vars = pharen\repl\get_file_vars($last_file_php, get_defined_vars());
         }
-        include_once("repl.php");
-        pharen_repl\intro();
+        NamespaceNode::$repling = True;
+        echo pharen\repl\intro();
         compile_lang();
-        pharen_repl\work("", $repl_vars);
+        set_include_path(get_include_path() . PATH_SEPARATOR . getcwd());
+        pharen\repl\work("", $repl_vars);
     }
     if(isset($_SERVER['REQUEST_METHOD'])){
         echo "<pre>$php_code</pre>";

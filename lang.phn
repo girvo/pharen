@@ -13,11 +13,17 @@
        ~@body)
      NULL))
 
+(defmacro when-set (val)
+  '(when (isset ~val) ~val))
+
 (defmacro error (&msgs)
   '(error-log (. ~@msgs)))
 
 (defmacro not (expr)
   '(! ~expr))
+
+(defmacro not-set (expr)
+  '(not (isset ~expr)))
 
 (defmacro pharen-or (e1 e2)
   '(if ~e1 ~e1 ~e2)) 
@@ -28,14 +34,22 @@
      ((not ~e2) ~e2)
      (TRUE      ~e2)))
 
-(defmacro load (file)
+(defmacro load (name)
+  (def php-file (. name ".php"))
+  (local file (. name ".phn"))
+  (local old-node-ns (:: Node ns))
   (local old-ns (:: RootNode ns))
+  (local raw-ns (:: RootNode raw-ns))
   (local old-ns_string (:: RootNode ns-string))
   (local lib-path (stream-resolve-include-path file))
-  (compile (file-get-contents lib-path))
-  (= (:: RootNode ns) old-ns)
-  (= (:: RootNode ns-string) old-ns-string)
-  FALSE)
+  (when lib-path
+    (compile-file lib-path)
+    (= (:: Node ns) old-node-ns)
+    (= (:: RootNode ns) old-ns)
+    (= (:: RootNode ns-string) old-ns-string)
+    (= (:: RootNode raw-ns) raw-ns)
+    '(include ~php-file)))
+
 
 (defmacro runtime (expr)
   '(let [time-start (microtime TRUE)
@@ -58,9 +72,15 @@
 
 (fn first (xs)
   (-> (seq xs) (first)))
+(poly-ann first (^Seq xs))
+(fun first (^FastSeq xs)
+     (-> xs first))
 
 (fn rest (xs)
   (-> (seq xs) (rest)))
+(poly-ann rest (^Seq xs))
+(fun rest (^FastSeq xs)
+     (-> xs rest))
 
 (fn pharen-list (a &xs)
   (cons a xs))
@@ -95,20 +115,24 @@
      ~then
      ~else))
 
-(defmacro when-not (cond then)
+(defmacro when-not (cond &then)
   '(when (not ~cond)
-     ~then))
+     ~@then))
 
 (defmacro dotimes (binding &exprs)
   (def varname (:binding 0))
   (def n (:binding 1))
-  '(do
-     (map (lambda (~varname) ~@exprs) [0 .. ~n])
-     NULL))
+  '((lambda (~varname --dotimes-result)
+           (if (>= ~varname ~n)
+             --dotimes-result
+             (do
+               (local --dotimes-result (do ~@exprs))
+               (recur (inc ~varname) --dotimes-result)))) 0 NULL))
 
-(fn prn (s)
-  (do
-    (print* s "\n")
+(fn prn (s &other)
+  (let
+    [str (. s (seq-join other))]
+    (print* str "\n")
     NULL))
 
 (fn false? (x)
@@ -117,8 +141,11 @@
 (fn true? (x)
   (=== TRUE x))
 
+(fn null? (x)
+  (=== NULL x))
+
 (fn zero? (n)
-  (== n 0))
+  (=== n 0))
 
 (fn pos? (n)
   (> n 0))
@@ -127,10 +154,10 @@
   (< n 0))
 
 (fn odd? (n)
-  (== (% n 2) 1))
+  (=== (% n 2) 1))
 
 (fn even? (n)
-  (== (% n 2) 0))
+  (=== (% n 2) 0))
 
 (fn str (s1 s2)
   (. s1 s2))
@@ -144,6 +171,12 @@
 (fn dec (x)
   (- x 1))
 
+(defmacro set! (var val)
+  '(local ~var ~val))
+
+(defmacro alter (var f &args)
+  '(local ~var (~$f ~var ~@args)))
+
 (fn comp (&fs)
   (let [rfs (reverse fs)]
     (lambda (&args)
@@ -154,18 +187,30 @@
   (or (zero? n) (empty? xs)))
 
 (fn empty? (xs)
-  (or (inst? (seq xs) PharenEmptyList) (not (seq xs))))
+  (or (inst? (seq xs) .PharenEmptyList) (not (seq xs))))
+(poly-ann empty? (^Seq xs))
+(fun empty? (^FastSeq xs)
+     (=== (-> xs length) 0))
 
 (fn seq? (x)
   (inst? x IPharenSeq))
+(fun seq? (^Seq x)
+     TRUE)
 
 (fn sequential? (x)
   (or (inst? x IPharenSeq) (is-array x)))
+
+(fn assoc? (x)
+  (inst? x PharenHashMap))
 
 (fn seq (x)
   (if (inst? x IPharenSeq)
     (-> x (seq))
     (:: PharenList (seqify x))))
+(fun seq (^Seq x)
+     x)
+(fun seq (^FastSeq x)
+     x)
 
 (fn hashify (x)
   (if (inst? x PharenHashMap)
@@ -196,6 +241,7 @@
 (fn arr (x)
   (cond
     ((is-array x) x)
+    ((inst? x "PharenHashMap") (-> x (arr)))
     ((inst? x "IPharenSeq") (-> x (arr)))))
 
 
@@ -209,6 +255,7 @@
   (if (seq? xs)
     (-> xs (cons x))
     (-> (seq xs) (cons x))))
+(poly-ann cons (x ^Seq xs))
 
 (fn assoc (key val hm)
   (-> (hashify hm) (assoc key val)))
@@ -234,7 +281,7 @@
     (reverse (rest xs) (cons (first xs) acc))))
 
 (fn interpose (sep xs [acc []])
-  (if (== (count xs) 1)
+  (if (=== (count xs) 1)
     [(first xs)]
     (cons (first xs) (cons sep (interpose sep (rest xs))))))
 
@@ -254,9 +301,16 @@
     (cons ($f (first xs) (first ys))
           (zip-with f (rest xs) (rest ys)))))
 
+(fn pharen-sort (xs)
+  (let [arr (arr xs)]
+    (sort arr)
+    arr))
 
 (fn seq-join (xs [glue ""])
   (implode glue (arr xs)))
+
+(fn seq-rand (xs)
+  (:xs (rand 0 (dec (count xs)))))
 
 (fn infinity ([n 0])
   (lazy-seq (cons n (infinity (+ n 1)))))
@@ -282,7 +336,7 @@
   (array-values (arr m)))
 
 (fn append (x xs)
-  (array-merge xs [x]))
+  (concat xs [x]))
 
 (fn apply (f &args)
   (let [name (if (is-array f) (:f 0) f)
@@ -314,6 +368,8 @@
   (if (empty? xs)
     acc
     (reduce f ($f (first xs) acc) (rest xs))))
+(poly-ann reduce (f acc ^Seq xs))
+(poly-ann reduce (f acc ^FastSeq xs))
 
 (fn reduce-fns (fns acc xs)
   (if (empty? xs)
@@ -351,7 +407,7 @@
 
 (fn map-indexed (f xs [idx 0])
   (if (empty? xs)
-    xs
+    []
     (cons ($f (first xs) idx) (map-indexed f (rest xs) (inc idx)))))
 
 (fn map-pairs (f pairs)
@@ -387,8 +443,15 @@
   '(method* private ~name ~args
             ~@code))
 
+(defmacro static-method (name args &code)
+  '(method* static ~name ~args
+            ~@code))
+
 (defmacro this (&exprs)
   '(-> this ~@exprs))
+
+(defmacro self (&expr)
+  '(:: self ~@exprs))
 
 (defmacro signature (name args)
   '(signature* public ~name ~args))
@@ -433,12 +496,12 @@
       "No matching pattern")))
 
 (defmacro defmulti (nm args)
-  (def name nm)
+  (def name (. nm ""))
   '(do
      (= (:: MultiManager (:multis ~name)) {})
      (fn ~nm ~args
        ((get-multi ~name (func-get-args)) ~@args))))
 
 (defmacro defmethod (nm pattern args &body)
-  (def name nm)
+  (def name (. nm ""))
   '(:: MultiManager (set-multi ~name (multi-serialize-pattern ~pattern) (lambda (a) ~@body))))
